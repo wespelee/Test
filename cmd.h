@@ -1,0 +1,3 @@
+
+
+#define SYSTEMCMD_SERVER    "/tmp/SYSTEMCMD_SERVER"
