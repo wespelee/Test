@@ -17,6 +17,8 @@
 #define BACKLOG 5     // how many pending connections queue will hold
 #define BUF_SIZE 200
 
+#define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
+
 int fd_A[BACKLOG];    // accepted connection fd
 int conn_amount;    // current connection amount
 
@@ -146,16 +148,32 @@ void daemon_destroy(struct systemcmd_d *daemon)
 void daemon_run(struct systemcmd_d *daemon)
 {
     while (d_running) {
-        struct epoll_event ev;
-        int n;
+        struct epoll_event ep[16];
+        int n, i;
 
-        n = epoll_wait(daemon->epfd, &ev, 1, -1);
+        n = epoll_wait(daemon->epfd, ep, ARRAY_LENGTH(ep), -1);
 
         if (n < 0)
             error(0, errno, "epoll_wait failed");
         if (n != 1)
             continue;
 
+        for (i = 0; i < n; i++) {
+            if ((events[i].events & EPOLLERR) ||
+                    (events[i].events & EPOLLHUP) ||
+                    (!(events[i].events & EPOLLIN))) {
+                /* An error has occured on this fd, 
+                 * or the socket is not ready for reading 
+                 * (why were we notified then?) 
+                 */ 
+                fprintf (stderr, "epoll error\n");
+                close(events[i].data.fd);
+                continue;
+            }
+        }
+
+        recv_msg();
+        new_fd = accept(sock_fd, (struct sockaddr *)&client_addr, &sin_size);
     }
 }
 
