@@ -170,6 +170,8 @@ void daemon_run(struct systemcmd_d *daemon)
                 close(events[i].data.fd);
                 continue;
             }
+            else if (daemon->server_fd == events[i].data.fd) {
+            }
         }
 
         recv_msg();
