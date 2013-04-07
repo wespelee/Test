@@ -171,11 +171,28 @@ void daemon_run(struct systemcmd_d *daemon)
                 continue;
             }
             else if (daemon->server_fd == events[i].data.fd) {
+                socklen_t clilen;
+                struct sockaddr_un  cli_addr, serv_addr;
+                int newsfd;
+                newsfd = accept(
+                        events[i].data.fd, (struct sockaddr *)&cli_addr, &clilen);
+
+                if (newsfd < 0) {
+                    if ((errno == EAGAIN) ||  
+                            (errno == EWOULDBLOCK)) {
+                        /* We have processed all incoming 
+                         * 
+                         * connections.
+                         */
+                        break;
+                    }
+                    else {
+                        perror ("accept");  
+                        break;  
+                    }
+                }
             }
         }
-
-        recv_msg();
-        new_fd = accept(sock_fd, (struct sockaddr *)&client_addr, &sin_size);
     }
 }
 
