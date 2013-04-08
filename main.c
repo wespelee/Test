@@ -120,6 +120,29 @@ int epoll_to_socket(struct systemcmd_d *daemon)
     return 0;
 }
 
+void handle_socket_conn(struct systemcmd_d *daemon)
+{
+    socklen_t clilen;
+    struct sockaddr_un  cli_addr, serv_addr;
+    int newsfd;
+    newsfd = accept(
+            daemon->server_fd, (struct sockaddr *)&cli_addr, &clilen);
+
+    if (newsfd < 0) {
+        if ((errno == EAGAIN) ||  
+                (errno == EWOULDBLOCK)) {
+            /* We have processed all incoming 
+             * connections.
+             */
+            return;
+        }
+        else {
+            perror ("accept");  
+            break;  
+        }
+    }
+}
+
 int daemon_init(struct systemcmd_d *daemon)
 {
     if (bind_to_socket(daemon) < 0)
@@ -148,50 +171,29 @@ void daemon_destroy(struct systemcmd_d *daemon)
 void daemon_run(struct systemcmd_d *daemon)
 {
     while (d_running) {
-        struct epoll_event ep[16];
+        struct epoll_event ev;
         int n, i;
 
-        n = epoll_wait(daemon->epfd, ep, ARRAY_LENGTH(ep), -1);
+        n = epoll_wait(daemon->epfd, &ev, 1, -1);
 
         if (n < 0)
             error(0, errno, "epoll_wait failed");
         if (n != 1)
             continue;
 
-        for (i = 0; i < n; i++) {
-            if ((events[i].events & EPOLLERR) ||
-                    (events[i].events & EPOLLHUP) ||
-                    (!(events[i].events & EPOLLIN))) {
-                /* An error has occured on this fd, 
-                 * or the socket is not ready for reading 
-                 * (why were we notified then?) 
-                 */ 
-                fprintf (stderr, "epoll error\n");
-                close(events[i].data.fd);
-                continue;
-            }
-            else if (daemon->server_fd == events[i].data.fd) {
-                socklen_t clilen;
-                struct sockaddr_un  cli_addr, serv_addr;
-                int newsfd;
-                newsfd = accept(
-                        events[i].data.fd, (struct sockaddr *)&cli_addr, &clilen);
-
-                if (newsfd < 0) {
-                    if ((errno == EAGAIN) ||  
-                            (errno == EWOULDBLOCK)) {
-                        /* We have processed all incoming 
-                         * 
-                         * connections.
-                         */
-                        break;
-                    }
-                    else {
-                        perror ("accept");  
-                        break;  
-                    }
-                }
-            }
+        if ((ev.events & EPOLLERR) ||
+                (ev.events & EPOLLHUP) ||
+                (!(ev.events & EPOLLIN))) {
+            /* An error has occured on this fd, 
+             * or the socket is not ready for reading 
+             * (why were we notified then?) 
+             */ 
+            error(0, errno, "epoll error\n");
+            close(ev.data.fd);
+            continue;
+        }
+        else if (ev.data.fd == daemon->server_fd) {
+            handle_socket_conn(daemon);
         }
     }
 }
