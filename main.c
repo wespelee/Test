@@ -32,6 +32,25 @@ void showclient()
     printf("\n\n");
 }
 
+static int make_socket_non_blocking (int sfd)
+{
+    int flags, s;
+
+    flags = fcntl (sfd, F_GETFL, 0);
+    if (flags == -1) {
+        perror ("fcntl");
+        return -1;
+    }
+
+    flags |= O_NONBLOCK;
+    s = fcntl (sfd, F_SETFL, flags);
+    if (s == -1) {
+        perror ("fcntl");
+        return -1;
+    }
+
+    return 0;
+}
 
 int d_running = 1;
 
@@ -141,6 +160,8 @@ void handle_socket_conn(struct systemcmd_d *daemon)
             break;  
         }
     }
+
+    printf("Accepted connection on descriptor %d", infd);
 }
 
 int daemon_init(struct systemcmd_d *daemon)
@@ -178,8 +199,10 @@ void daemon_run(struct systemcmd_d *daemon)
 
         if (n < 0)
             error(0, errno, "epoll_wait failed");
-        if (n != 1)
+        if (n != 1) {
+            printf("error: n=%d\n", n);
             continue;
+        }
 
         if ((ev.events & EPOLLERR) ||
                 (ev.events & EPOLLHUP) ||
