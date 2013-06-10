@@ -12,6 +12,9 @@
 #include <sys/epoll.h> 
 #include <netdb.h> 
 #include <stddef.h>
+#include <unistd.h>
+#include <fcntl.h>
+
 
 #include <cmd.h>
 
@@ -20,7 +23,6 @@
 
 #define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
 
-#if 0
 int fd_A[BACKLOG];    // accepted connection fd
 int conn_amount;    // current connection amount
 
@@ -38,22 +40,21 @@ static int make_socket_non_blocking (int sfd)
 {
     int flags, s;
 
-    flags = fcntl (sfd, F_GETFL, 0);
+    flags = fcntl(sfd, F_GETFL, 0);
     if (flags == -1) {
-        perror ("fcntl");
+        perror("fcntl");
         return -1;
     }
 
     flags |= O_NONBLOCK;
-    s = fcntl (sfd, F_SETFL, flags);
+    s = fcntl(sfd, F_SETFL, flags);
     if (s == -1) {
-        perror ("fcntl");
+        perror("fcntl");
         return -1;
     }
 
     return 0;
 }
-#endif
 
 int d_running = 1;
 
@@ -96,6 +97,11 @@ int bind_to_socket(struct systemcmd_d *daemon)
                 &yes, sizeof(int)) < 0) {
         close(daemon->server_fd);
         perror("setsockopt");
+        return -1;
+    }
+
+    if (make_socket_non_blocking(daemon->server_fd)) {
+        close(daemon->server_fd);
         return -1;
     }
 
@@ -199,7 +205,7 @@ void daemon_run(struct systemcmd_d *daemon)
         struct epoll_event ev;
         int n, i;
 
-        n = epoll_wait(daemon->epfd, &ev, 1, -1);
+        n = epoll_wait(daemon->epfd, &ev, MAXEVENTS, -1);
 
         if (n < 0)
             error(0, errno, "epoll_wait failed");
