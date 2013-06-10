@@ -2,9 +2,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <error.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h> 
@@ -13,12 +15,12 @@
 
 #include <cmd.h>
 
-#define MYPORT 1234    // the port users will be connecting to
 #define BACKLOG 5     // how many pending connections queue will hold
 #define BUF_SIZE 200
 
 #define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
 
+#if 0
 int fd_A[BACKLOG];    // accepted connection fd
 int conn_amount;    // current connection amount
 
@@ -51,6 +53,7 @@ static int make_socket_non_blocking (int sfd)
 
     return 0;
 }
+#endif
 
 int d_running = 1;
 
@@ -67,7 +70,7 @@ struct systemcmd_d *daemon_create(void)
 {
     struct systemcmd_d *daemon = NULL;
 
-    daemon = calloc(1, sizeof(systemcmd_d));
+    daemon = calloc(1, sizeof(struct systemcmd_d));
     if (daemon == NULL) {
         perror("malloc");
         return NULL;
@@ -81,7 +84,6 @@ int bind_to_socket(struct systemcmd_d *daemon)
 {
     struct sockaddr_un addr;
     socklen_t size, name_size;
-    int fd_flags;
     int yes = 1;
 
     daemon->server_fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -101,14 +103,15 @@ int bind_to_socket(struct systemcmd_d *daemon)
     name_size = snprintf(addr.sun_path, sizeof addr.sun_path,
             "%s", SYSTEMCMD_SERVER);
     size = offsetof(struct sockaddr_un, sun_path) + name_size;  
-    if (bind(daemon->server_fd, &addr, size) < 0) {
+    if (bind(daemon->server_fd, (struct sockaddr*)&addr, size) < 0) {
+        /* Remember to cast addr to struct sockaddr to shut down warning */
         close(daemon->server_fd);
         perror("bind");
         return -1;
     }
 
     printf("Debug: FD_SETSIZE=%d\n", FD_SETSIZE);
-    if (listen(fd, FD_SETSIZE) < 0) {
+    if (listen(daemon->server_fd, FD_SETSIZE) < 0) {
         close(daemon->server_fd);
         perror("listen");
         return -1;
@@ -128,6 +131,7 @@ int epoll_to_socket(struct systemcmd_d *daemon)
         return -1;
     }
 
+    memset(&ev, 0, sizeof(struct epoll_event));
     ev.data.fd = daemon->server_fd;
     ev.events = EPOLLIN | EPOLLET;
 
@@ -157,11 +161,11 @@ void handle_socket_conn(struct systemcmd_d *daemon)
         }
         else {
             perror ("accept");  
-            break;  
+            //break;  
         }
     }
 
-    printf("Accepted connection on descriptor %d", infd);
+    printf("Accepted connection on descriptor %d", newsfd);
 }
 
 int daemon_init(struct systemcmd_d *daemon)
@@ -231,7 +235,7 @@ int main(int argc, const char *argv[])
     if (daemon_init(daemon) < 0)
         goto destroy;
 
-    daemon_run(daemon);
+    //daemon_run(daemon);
     
 destroy:
     daemon_destroy(daemon);
@@ -240,6 +244,7 @@ out:
     return 0;
 }
 
+#if 0
 int main(void)
 {
     int sock_fd, new_fd;  // listen on sock_fd, new connection on new_fd
@@ -363,3 +368,4 @@ int main(void)
     exit(0);
 
 }
+#endif
