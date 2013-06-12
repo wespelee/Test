@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 
 
 #include <cmd.h>
@@ -187,8 +188,11 @@ int daemon_init(struct systemcmd_d *daemon)
 
 void daemon_destroy(struct systemcmd_d *daemon)
 {
+    //printf("server_fd=%d epfd=%d\n", daemon->server_fd, daemon->epfd);
+#if 0
     if (daemon->server_fd)
         close(daemon->server_fd);
+#endif
 
     if (daemon->epfd)
         close(daemon->epfd);
@@ -226,9 +230,15 @@ void daemon_run(struct systemcmd_d *daemon)
             continue;
         }
         else if (ev.data.fd == daemon->server_fd) {
-            handle_socket_conn(daemon);
+            printf("handle_socket_conn\n");
+            //handle_socket_conn(daemon);
         }
     }
+}
+
+int setup_signals()
+{
+    signal(SIGINT, daemon_destroy);
 }
 
 int main(int argc, const char *argv[])
@@ -241,7 +251,10 @@ int main(int argc, const char *argv[])
     if (daemon_init(daemon) < 0)
         goto destroy;
 
-    //daemon_run(daemon);
+    if (setup_signals())
+        goto destroy;
+
+    daemon_run(daemon);
     
 destroy:
     daemon_destroy(daemon);
