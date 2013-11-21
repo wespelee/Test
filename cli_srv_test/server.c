@@ -26,16 +26,37 @@
 #define BUF_SIZE 200
 #define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
 
-int cli_fd[100];    // accepted connection fd
-
-void show_client()
+void show_client(struct srv_info *srv)
 {
-    int i;
-    loglog("client amount: %d\n", conn_amount);
-    for (i = 0; i < conn_amount; i++) {
-        fprintf(stderr, "[%d]:%d  ", i, cli_fd[i]);
+    struct client *cli;
+    int i = 0;
+
+    loglog("client amount: %d\n", hlist_length(&srv->client_list));
+
+    hlist_for_each(cli, &srv->client_list, link) {
+        loglog("[%d]:%d\n", i, cli->cli_fd);
+        i++;
     }
-    fprintf(stderr, "\n\n");
+}
+
+static int make_socket_non_blocking (int sfd)
+{
+    int flags, s;
+
+    flags = fcntl(sfd, F_GETFL, 0);
+    if (flags == -1) {
+        perror("fcntl");
+        return -1;
+    }
+
+    flags |= O_NONBLOCK;
+    s = fcntl(sfd, F_SETFL, flags);
+    if (s == -1) {
+        perror("fcntl");
+        return -1;
+    }
+
+    return 0;
 }
 
 static int log_timestamp(void)
@@ -103,18 +124,21 @@ int bind_to_socket()
     return sockfd;
 }
 
-void client_destroy(struct cli_info *client)
+void client_destroy(struct client *client)
 {
     if (client) {
+        hlist_remove(&client->link);
+        close(client->cli_fd);
+        shutdown(client->cli_fd, SHUT_RDWR);
         free(client);
         client = NULL;
     }
     return;
 }
 
-struct cli_info *create_client(int fd)
+struct client *create_client(int fd)
 {
-    struct cli_info *client = NULL;
+    struct client *client = NULL;
 
     client = malloc(sizeof(*client));                                                                                                                                                                          
     if (client == NULL) {
@@ -130,10 +154,9 @@ struct cli_info *create_client(int fd)
     return client;
 }
 
-void server_quit_send(int fd)
+void server_full_quit(int fd)
 {
     if (fd) {
-        send(fd, "bye", 4, 0);
         close(fd);
         shutdown(fd, SHUT_RDWR);
     }
@@ -143,30 +166,30 @@ void server_quit_send(int fd)
 void add_client(struct srv_info *srv)
 {
     int cli_sock;
-    struct cli_info *client = NULL;
+    struct client *client = NULL;
     struct sockaddr_un cli_addr;
-    socklen_t cli_len;
+    socklen_t cli_len = 0;
+    int len = 0;
+
+    memset(&cli_addr, 0, sizeof(cli_addr));
+    len = hlist_length(&srv->client_list);
 
     cli_sock = accept(srv->sock, (struct sockaddr *)&cli_addr, &cli_len);
-    if (client->cli_fd <= 0) {
+    if (cli_sock <= 0) {
         loglog("error accept: %s\n", strerror(errno));
         return;
     }
 
-    if (srv->total_client > MAX_CLIENT) {
-        loglog("max connections arrive, exit\n");
-        server_quit_send(cli_sock);
+    if (len > MAX_CLIENT) {
+        loglog("max connections arrive!\n");
+        server_full_quit(cli_sock);
         return;
     }
 
     client = create_client(cli_sock);
 
     if (client) {
-        hlist_insert(&srv->cli_list, &client->link);
-        srv->total_client++;
-
-        if (cli_sock > srv->max_sock)
-            srv->max_sock = cli_sock;
+        hlist_insert(&srv->client_list, &client->link);
     }
 
     return;
@@ -175,7 +198,7 @@ void add_client(struct srv_info *srv)
 int server_init(struct srv_info *srv)
 {
     memset(srv, 0, sizeof(struct srv_info));
-    hlist_init(&srv->cli_list);
+    hlist_init(&srv->client_list);
 
     srv->sock = bind_to_socket();
 
@@ -189,22 +212,78 @@ int server_init(struct srv_info *srv)
 
 void select_fd_init(struct srv_info *srv)
 {
+    struct client *cli;
+    int max_fd = srv->sock;
+
     FD_ZERO(&srv->fdsr);
     FD_SET(srv->sock, &srv->fdsr);
 
-    for (i = 0; i < SERVER_MAX_CLIENT; i++) {
-        if (cli_fd[i] != 0) {
-            FD_SET(cli_fd[i], &fdsr);
-        }
+    hlist_for_each(cli, &srv->client_list, link) {
+        loglog("client fd:%d\n", cli->cli_fd);
+        FD_SET(cli->cli_fd, &srv->fdsr);
+
+        if (cli->cli_fd > max_fd)
+            max_fd = cli->cli_fd;
     }
 
+    srv->max_sock = max_fd;
+    loglog("max sock:%d\n", srv->max_sock);
+}
+
+void handle_recv_client(struct client *client)
+{
+    char buf[BUF_SIZE];
+    int ret;
+
+    ret = recv(client->cli_fd, buf, sizeof(buf), 0);
+    if (ret == 0) {
+        /* Client close */
+        loglog("client %d close: %d err:%s\n", client->cli_fd, ret, strerror(errno));
+        client_destroy(client);
+    }
+    else if (ret < 0 && errno == EAGAIN) {
+        loglog("client %d needs again: %d err:%s\n", client->cli_fd, ret, strerror(errno));
+    }
+    else {
+        /* Receive data */
+        if (ret < BUF_SIZE) {
+            buf[ret] = '\0';
+            loglog("client[%d] send:%s\n", client->cli_fd, buf);
+            snprintf(buf, BUF_SIZE, "server recieve %d bytes", ret);
+            send(client->cli_fd, buf, strlen(buf), 0);
+        }
+        else {
+            loglog("server recieve %d buffer overflow\n", client->cli_fd);
+            client_destroy(client);
+        }
+    }
+}
+
+void process_client(struct srv_info *srv)
+{
+    struct client *cli, *next;
+
+    hlist_for_each_safe(cli, next, &srv->client_list, link) {
+        if (FD_ISSET(cli->cli_fd, &srv->fdsr))
+            handle_recv_client(cli);
+    }
+}
+
+void server_close(struct srv_info *srv)
+{
+    struct client *cli, *next;
+
+    hlist_for_each_safe(cli, next, &srv->client_list, link)
+        client_destroy(cli);
+
+    close(srv->sock);
 }
 
 int main(int argc, char *argv[])
 {
-    int sockfd, i, ret;
-    char buf[BUF_SIZE];
+    int ret;
     struct timeval tv;
+    int srv_run = 1;
 
     struct srv_info srv;
 
@@ -212,52 +291,35 @@ int main(int argc, char *argv[])
         exit(-1);
 
     loglog("Server Start...\n");
-    while (1) {
+    while (srv_run) {
         tv.tv_sec = 30;
         tv.tv_usec = 0;
 
+        select_fd_init(&srv);
+
+        //ret = select(srv.max_sock + 1, &srv.fdsr, NULL, NULL, &tv);
         ret = select(srv.max_sock + 1, &srv.fdsr, NULL, NULL, &tv);
         if (ret < 0) {
             loglog("error select: %s\n", strerror(errno));
             break;
         } else if (ret == 0) {
             loglog("timeout\n");
+            srv_run = 0;
             continue;
         }
 
-        /* Check previous clients */
-        for (i = 0; i < conn_amount; i++) {
-            if (FD_ISSET(cli_fd[i], &srv.fdsr)) {
-                ret = recv(cli_fd[i], buf, sizeof(buf), 0);
-                if (ret <= 0) {        // client close
-                    loglog("client[%d] close\n", i);
-                    close(cli_fd[i]);
-                    shutdown(cli_fd[i], SHUT_RDWR);
-                    FD_CLR(cli_fd[i], &srv.fdsr);
-                    cli_fd[i] = 0;
-                } else {        // receive data
-                    if (ret < BUF_SIZE) {
-                        memset(&buf[ret], '\0', 1);
-                    }
-                    loglog("client[%d] send:%s\n", i, buf);
-                    snprintf(buf, BUF_SIZE, "recieve %d bytes", ret);
-                    send(cli_fd[i], buf, strlen(buf), 0);
-                }
-            }
-        }
+        loglog("Something happened...\n");
+
+        process_client(&srv);
 
         if (FD_ISSET(srv.sock, &srv.fdsr)) {
             add_client(&srv);
         }
 
-        show_client();
+        show_client(&srv);
     }
 
-    for (i = 0; i < BACKLOG; i++) {
-        if (cli_fd[i] != 0) {
-            close(cli_fd[i]);
-        }
-    }
-    close(sockfd);
+    loglog("Server Stop...\n");
+    server_close(&srv);
     exit(0);
 }

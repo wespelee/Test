@@ -4,7 +4,7 @@
 #include <stdarg.h>
 
 #include "common.h"
-#include "list.h"
+#include "hlist.h"
 
 SRV_EXPORT void
 hlist_init(struct hlist *list)

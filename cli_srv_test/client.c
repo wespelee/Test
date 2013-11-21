@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/time.h>
 
 #define BUF_SIZE 200
 
@@ -23,6 +24,10 @@ int main(int argc, char *argv[])
     struct sockaddr_un  serv_addr;
     char buffer[BUF_SIZE];
     pid_t my_pid = getpid();
+
+    struct tm *brokendown_time;
+    struct timeval tv;
+    char string[128];
 
     bzero((char *)&serv_addr,sizeof(serv_addr));
     serv_addr.sun_family = AF_LOCAL;
@@ -42,13 +47,20 @@ int main(int argc, char *argv[])
     }
 
     bzero(buffer, BUF_SIZE);
-    snprintf(buffer, BUF_SIZE, "%d PID: %d send", time(NULL), my_pid);
+    gettimeofday(&tv, NULL);
+    brokendown_time = localtime(&tv.tv_sec);
+    strftime(string, sizeof string, "%H:%M:%S", brokendown_time);
+
+    snprintf(buffer, BUF_SIZE, "%s PID: %d send", string, my_pid);
     printf("My pid = %d is ready to send\n", my_pid);
     write(sockfd, buffer, strlen(buffer));
     printf("My pid = %d is ready to read\n", my_pid);
+    fflush(NULL);
     n = read(sockfd, buffer, BUF_SIZE);
     buffer[n] = '\0';
-    printf("%d The return message was %s\n", my_pid, buffer);
+    printf("%d The return message was: %s\n", my_pid, buffer);
+    fflush(NULL);
+    sleep(10);
     close(sockfd);
     return 0;
 }
